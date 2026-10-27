@@ -1,0 +1,23 @@
+name: Build APK
+on: [workflow_dispatch, push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download Stockfish for Android
+        run: |
+          mkdir -p libs/arm64-v8a
+          curl -L -o sf.tar https://github.com/official-stockfish/Stockfish/releases/download/sf_17.1/stockfish-android-armv8.tar
+          tar xf sf.tar stockfish/stockfish-android-armv8
+          cp stockfish/stockfish-android-armv8 libs/arm64-v8a/libstockfish.so
+      - name: Build with Buildozer
+        uses: ArtemSBulgakov/buildozer-action@v1
+        id: buildozer
+        with:
+          command: buildozer android debug
+          buildozer_version: stable
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ChessAnalyzer-apk
+          path: ${{ steps.buildozer.outputs.filename }}
