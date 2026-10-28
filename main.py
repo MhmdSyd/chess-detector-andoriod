@@ -276,36 +276,42 @@ class ChessAnalyzerApp(App):
         def work():
             try:
                 img = android_utils.load_image(path)
-                box = board_finder.find_board(img)
-                Clock.schedule_once(lambda dt: self._show_crop(img, box))
+                img, box, angle = board_finder.find_board_deskewed(img)     # straightens tilted photos
+                Clock.schedule_once(lambda dt: self._show_crop(img, box, angle))
             except Exception as e:                               # noqa
                 Clock.schedule_once(lambda dt: (self.unbusy(), self.status("Could not open picture: %s" % e, "err")))
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _show_crop(self, img, box):
+    def _show_crop(self, img, box, angle=0.0):
         self.unbusy()
         self.image = img
         self.cropper.crop.set_image(img)
+        tilt = " Photo was tilted %.1f deg - straightened." % abs(angle) if abs(angle) >= 0.3 else ""
         if box:
             self.cropper.crop.box = list(box[:3])
-            self.cropper.hint.text = "Board found. Drag the square or its corners if the grid is not on the squares."
+            self.cropper.hint.text = "Board found." + tilt + " Drag the square or its corners if the grid is not on the squares."
         else:
-            self.cropper.hint.text = "Board not found automatically - move and resize the square over the board."
+            self.cropper.hint.text = "Board not found automatically." + tilt + " Move and resize the square over the board."
         self.sm.current = "crop"
 
     def on_redetect(self, *_):
         if self.image is None:
             return
         self.busy("Looking for the board...")
+        src = self.image
 
         def work():
-            box = board_finder.find_board(self.image)
+            img, box, angle = board_finder.find_board_deskewed(src)
+
             def done(dt):
                 self.unbusy()
+                if img is not src:                                   # a residual tilt was corrected
+                    self.image = img
+                    self.cropper.crop.set_image(img)
                 if box:
                     self.cropper.crop.box = list(box[:3])
-                    self.cropper.hint.text = "Board found."
+                    self.cropper.hint.text = "Board found." + (" Straightened %.1f deg." % abs(angle) if abs(angle) >= 0.3 else "")
                 else:
                     self.cropper.hint.text = "No board found - place the square by hand."
             Clock.schedule_once(done)

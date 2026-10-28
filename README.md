@@ -19,6 +19,11 @@ Pick a chess screenshot from the gallery (or take a photo), the app reads the po
     pip install -r requirements-desktop.txt
     python main.py [optional_screenshot.png]      # needs Stockfish on PATH
 
+## Changes in 1.1
+- Camera: fixed a crash when pressing Camera (nested Java class bug), the app now asks for the
+  CAMERA permission and shows a message instead of closing if anything goes wrong.
+- Tilted photos: the picture is automatically straightened before the board is cropped.
+
 ## Notes
 - Needs a 64-bit phone with Android 10+. APK is ~50 MB (Stockfish inside).
 - Not tested on a real phone yet: gallery/camera and running the bundled Stockfish.

@@ -21,6 +21,7 @@ rnd = random.Random(1)
 for _ in range(14):
     y = rnd.choice(list(range(80, 540, 60)) + list(range(1700, 2300, 70))); d.rectangle([40, y, 40 + rnd.randint(200, 900), y + 30], fill=(90, 88, 84))
 canvas.paste(Image.fromarray(a.astype(np.uint8)), (40, 620))
+if os.environ.get("TILT"): canvas = canvas.rotate(float(os.environ["TILT"]), resample=Image.BILINEAR, expand=True, fillcolor=(38, 36, 33))
 path = "/tmp/fake_screenshot.png"; canvas.save(path)
 print("expected FEN placement:", bd.board_fen(), "| side to move:", "w" if bd.turn else "b", "| last move:", mv.uci())
 
@@ -34,10 +35,10 @@ class TestApp(M.ChessAnalyzerAppBase if hasattr(M, "ChessAnalyzerAppBase") else 
     def on_start(self):
         super().on_start()
         Clock.schedule_once(lambda dt: self.on_image_ready(path, None), 1.0)
-        Clock.schedule_once(lambda dt: Window.screenshot("/tmp/ui_1_crop.png"), 6)
-        Clock.schedule_once(lambda dt: (print("box:", self.cropper.crop.get_box()), self.on_crop_confirm()), 6.5)
-        Clock.schedule_once(lambda dt: Window.screenshot("/tmp/ui_2_main.png"), 13)
-        Clock.schedule_once(lambda dt: self.report(), 13.3)
+        Clock.schedule_once(lambda dt: Window.screenshot("/tmp/ui_1_crop.png"), 10)
+        Clock.schedule_once(lambda dt: (print("box:", self.cropper.crop.get_box()), self.on_crop_confirm()), 10.5)
+        Clock.schedule_once(lambda dt: Window.screenshot("/tmp/ui_2_main.png"), 18)
+        Clock.schedule_once(lambda dt: self.report(), 18.5)
     def report(self):
         print("app FEN :", self.board.get_fen())
         print("expected:", bd.fen().rsplit(" ", 2)[0].split(" ")[0], "(placement)")

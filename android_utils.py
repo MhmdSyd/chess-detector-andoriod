@@ -86,10 +86,11 @@ class _Android:
             # Fallback: let Android decode and re-encode the picture
             BitmapFactory = autoclass("android.graphics.BitmapFactory")
             Bitmap = autoclass("android.graphics.Bitmap")
+            CompressFormat = autoclass("android.graphics.Bitmap$CompressFormat")   # nested class: use '$'
             ins = resolver.openInputStream(uri)
             bmp = BitmapFactory.decodeStream(ins)
             out = FileOutputStream(dest)
-            bmp.compress(Bitmap.CompressFormat.JPEG, 95, out)
+            bmp.compress(CompressFormat.JPEG, 95, out)
             out.close()
             ins.close()
 
@@ -99,36 +100,68 @@ class _Android:
 
     # -- public ----------------------------------------------------------------
     def pick_image(self, callback):
-        from jnius import autoclass, cast
-        self._bind()
         self._callback = callback
-        Intent = autoclass("android.content.Intent")
-        String = autoclass("java.lang.String")
-        intent = Intent(Intent.ACTION_GET_CONTENT)
-        intent.setType("image/*")
-        intent.addCategory(Intent.CATEGORY_OPENABLE)
-        title = cast("java.lang.CharSequence", String("Choose a chess screenshot"))
-        self._activity().startActivityForResult(Intent.createChooser(intent, title), REQ_PICK)
+        try:
+            from jnius import autoclass, cast
+            self._bind()
+            Intent = autoclass("android.content.Intent")
+            String = autoclass("java.lang.String")
+            intent = Intent(Intent.ACTION_GET_CONTENT)
+            intent.setType("image/*")
+            intent.addCategory(Intent.CATEGORY_OPENABLE)
+            title = cast("java.lang.CharSequence", String("Choose a chess screenshot"))
+            self._activity().startActivityForResult(Intent.createChooser(intent, title), REQ_PICK)
+        except Exception as e:                                   # noqa - never crash the app
+            self._finish(None, "Gallery error: %s" % e)
 
     def take_photo(self, callback):
-        from jnius import autoclass, cast
-        self._bind()
+        """Ask for the CAMERA permission (first time), then open the camera app."""
         self._callback = callback
-        Intent = autoclass("android.content.Intent")
-        MediaStore = autoclass("android.provider.MediaStore")
-        ContentValues = autoclass("android.content.ContentValues")
-        values = ContentValues()
-        values.put("_display_name", "chess_board_%d.jpg" % int(time.time()))
-        values.put("mime_type", "image/jpeg")
-        values.put("relative_path", "Pictures/ChessAnalyzer")
-        resolver = self._activity().getContentResolver()
-        self._camera_uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-        if self._camera_uri is None:
-            self._finish(None, "Could not prepare the camera.")
+        try:
+            from android.permissions import Permission, check_permission, request_permissions
+        except Exception:                                        # very old p4a: just try
+            self._launch_camera()
             return
-        intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
-        intent.putExtra(MediaStore.EXTRA_OUTPUT, cast("android.os.Parcelable", self._camera_uri))
-        self._activity().startActivityForResult(intent, REQ_CAMERA)
+        try:
+            if check_permission(Permission.CAMERA):
+                self._launch_camera()
+                return
+
+            def on_permission(permissions, grants):
+                if grants and all(grants):
+                    Clock.schedule_once(lambda dt: self._launch_camera(), 0)
+                else:
+                    self._finish(None, "Camera permission denied. Enable it in Settings > Apps > "
+                                       "Chess Analyzer > Permissions.")
+            request_permissions([Permission.CAMERA], on_permission)
+        except Exception as e:                                   # noqa
+            self._finish(None, "Camera permission error: %s" % e)
+
+    def _launch_camera(self):
+        try:
+            from jnius import autoclass, cast
+            self._bind()
+            Intent = autoclass("android.content.Intent")
+            MediaStore = autoclass("android.provider.MediaStore")
+            # Nested Java classes must be loaded with '$' in pyjnius (MediaStore.Images.Media
+            # as an attribute does not exist and used to crash the app).
+            ImagesMedia = autoclass("android.provider.MediaStore$Images$Media")
+            ContentValues = autoclass("android.content.ContentValues")
+            values = ContentValues()
+            values.put("_display_name", "chess_board_%d.jpg" % int(time.time()))
+            values.put("mime_type", "image/jpeg")
+            values.put("relative_path", "Pictures/ChessAnalyzer")
+            resolver = self._activity().getContentResolver()
+            self._camera_uri = resolver.insert(ImagesMedia.EXTERNAL_CONTENT_URI, values)
+            if self._camera_uri is None:
+                self._finish(None, "Could not prepare the camera.")
+                return
+            intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+            intent.putExtra(MediaStore.EXTRA_OUTPUT, cast("android.os.Parcelable", self._camera_uri))
+            self._activity().startActivityForResult(intent, REQ_CAMERA)
+        except Exception as e:                                   # noqa - never crash the app
+            self._delete_camera_entry()
+            self._finish(None, "Camera error: %s" % e)
 
     # -- result ----------------------------------------------------------------
     def _on_result(self, request_code, result_code, intent):
