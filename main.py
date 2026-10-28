@@ -24,6 +24,7 @@ from kivy.core.window import Window
 from kivy.metrics import dp, sp
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
+from kivy.uix.image import Image
 from kivy.uix.label import Label
 from kivy.uix.modalview import ModalView
 from kivy.uix.screenmanager import NoTransition, Screen, ScreenManager
@@ -44,6 +45,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ASSETS = os.path.join(HERE, "assets")
 FONT = os.path.join(ASSETS, "fonts", "DejaVuSans.ttf")
 WEIGHTS = os.path.join(ASSETS, "piece_model.npz")
+LOGO = os.path.join(ASSETS, "logo.png")
 
 BG, BAR, INDIGO, TEAL, GREY = "#1a1a2e", "#16213e", "#4f46e5", "#0f766e", "#374151"
 ARROW_COLORS = ["#0A70AC", "#FF8800", "#FFCC00"]
@@ -102,6 +104,7 @@ class MainScreen(Screen):
 
         # top bar
         top = BoxLayout(size_hint_y=None, height=dp(52), padding=dp(6), spacing=dp(6))
+        top.add_widget(Image(source=LOGO, size_hint_x=None, width=dp(44), fit_mode="contain"))
         top.add_widget(Label(text="Chess Analyzer", font_size=sp(18), bold=True,
                              color=rgba("#e2e8f0"), halign="left", valign="middle"))
         top.children[0].bind(size=lambda w, s: setattr(w, "text_size", s))
@@ -198,6 +201,7 @@ class CropScreen(Screen):
 
 class ChessAnalyzerApp(App):
     title = "Chess Analyzer"
+    icon = os.path.join(ASSETS, "icon.png")
 
     def build(self):
         Window.clearcolor = rgba(BG)
