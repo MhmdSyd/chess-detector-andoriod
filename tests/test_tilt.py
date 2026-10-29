@@ -3,7 +3,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.dirname(__file__))
 import numpy as np
 from PIL import Image, ImageFilter
-from test_board_finder import screen, det          # (importing runs that file's own quick checks)
+from synth import screen, det          # (importing runs that file's own quick checks)
 import board_finder as bf
 
 print("\n=== TILT TEST ===")

@@ -1,59 +1,65 @@
 """
-crop_view.py - shows the picture with a square crop box the user can drag / resize.
+crop_view.py - picture viewer with an adjustable 4-corner board outline.
 
-The box is always square (a chessboard is).  An 8x8 grid is drawn inside it so the
-user can see whether the squares line up before analysing.
+Used when the board could not be found automatically, or when the user wants to fine-tune
+the detected corners.  Each corner can be dragged on its own, so a tilted or
+perspective-distorted board can be outlined exactly; the 8x8 grid drawn inside follows
+the perspective.  While a corner is dragged a magnifier shows the area under the finger.
 """
 import numpy as np
 from kivy.graphics import Color, Ellipse, Line, Rectangle
 from kivy.graphics.texture import Texture
 from kivy.metrics import dp
-from kivy.properties import ListProperty, ObjectProperty
+from kivy.properties import ListProperty, NumericProperty, ObjectProperty
 from kivy.uix.widget import Widget
 from PIL import Image
 
-MIN_BOX = 64                 # px in image coordinates
-TEX_MAX = 2048               # keep display texture within safe GPU limits
+import board_detect as bd
+
+TEX_MAX = 2048               # keep the display texture within safe GPU limits
 
 
 class CropView(Widget):
-    box = ListProperty([0, 0, 100])            # x, y, size  (image pixel coordinates)
+    quad = ListProperty([0.0] * 8)               # x0,y0,...,x3,y3 in image pixels (TL,TR,BR,BL)
     texture = ObjectProperty(None, allownone=True)
+    dragging = NumericProperty(-1)               # index of the handle being dragged, -1 = none
 
     def __init__(self, **kw):
         super().__init__(**kw)
         self.img_w = self.img_h = 1
-        self._mode = None                      # None | 'move' | corner index 0..3
-        self._anchor = None
-        self._grab_off = (0, 0)
-        self.bind(pos=self._redraw, size=self._redraw, box=self._redraw, texture=self._redraw)
+        self._tex_scale = 1.0
+        self._disp = None                        # display copy of the picture (numpy)
+        self._mode = None                        # None | 'move' | corner index
+        self._grab = (0.0, 0.0)
+        self.bind(pos=self._redraw, size=self._redraw, quad=self._redraw,
+                  texture=self._redraw, dragging=self._redraw)
 
     # -- public ----------------------------------------------------------------
-    def set_image(self, rgb):
-        """rgb: HxWx3 uint8 numpy array (the working image; crop coordinates refer to it)."""
+    def set_image(self, rgb, quad=None):
         h, w = rgb.shape[:2]
         self.img_w, self.img_h = w, h
-        disp = rgb
+        disp, self._tex_scale = rgb, 1.0
         if max(h, w) > TEX_MAX:
-            k = TEX_MAX / max(h, w)
-            disp = np.asarray(Image.fromarray(rgb).resize((int(w * k), int(h * k)), Image.BILINEAR))
+            self._tex_scale = TEX_MAX / max(h, w)
+            disp = np.asarray(Image.fromarray(rgb).resize(
+                (int(w * self._tex_scale), int(h * self._tex_scale)), Image.BILINEAR))
         tex = Texture.create(size=(disp.shape[1], disp.shape[0]), colorfmt="rgb")
         tex.blit_buffer(np.ascontiguousarray(disp).tobytes(), colorfmt="rgb", bufferfmt="ubyte")
         tex.flip_vertical()
         self.texture = tex
-        s = int(min(w, h) * 0.8)
-        self.box = [(w - s) // 2, (h - s) // 2, s]
+        self._disp = np.ascontiguousarray(disp)
+        self.set_quad(quad if quad is not None else bd.default_quad(rgb))
 
-    def get_box(self):
-        x, y, s = [int(v) for v in self.box]
-        return x, y, s
+    def set_quad(self, q):
+        self.quad = [float(v) for v in np.asarray(q, dtype=float).reshape(-1)]
+
+    def get_quad(self):
+        return np.array(self.quad, dtype=float).reshape(4, 2)
 
     # -- coordinate mapping ----------------------------------------------------
     def _layout(self):
         k = min(self.width / self.img_w, self.height / self.img_h)
-        ox = self.x + (self.width - self.img_w * k) / 2
-        oy = self.y + (self.height - self.img_h * k) / 2
-        return k, ox, oy
+        return k, self.x + (self.width - self.img_w * k) / 2, self.y + (self.height - self.img_h * k) / 2
 
     def _to_widget(self, ix, iy):
         k, ox, oy = self._layout()
@@ -63,62 +69,96 @@ class CropView(Widget):
         k, ox, oy = self._layout()
         return (wx - ox) / k, self.img_h - (wy - oy) / k
 
-    def _corners(self):
-        x, y, s = self.box
-        return [(x, y), (x + s, y), (x, y + s), (x + s, y + s)]      # TL TR BL BR (image coords)
-
     # -- drawing ---------------------------------------------------------------
     def _redraw(self, *_):
         self.canvas.clear()
         if self.texture is None or self.width < 10:
             return
         k, ox, oy = self._layout()
-        iw, ih = self.img_w * k, self.img_h * k
-        bx, by, bs = self.box
-        l, t = self._to_widget(bx, by)          # top-left in widget coords
-        r, b = self._to_widget(bx + bs, by + bs)
+        q = self.get_quad()
         with self.canvas:
             Color(1, 1, 1, 1)
-            Rectangle(texture=self.texture, pos=(ox, oy), size=(iw, ih))
-            Color(0, 0, 0, 0.55)                                    # dim everything outside the box
-            Rectangle(pos=(ox, t), size=(iw, oy + ih - t))          # above
-            Rectangle(pos=(ox, oy), size=(iw, b - oy))              # below
-            Rectangle(pos=(ox, b), size=(l - ox, t - b))            # left
-            Rectangle(pos=(r, b), size=(ox + iw - r, t - b))        # right
-            for col, w in (((0, 0, 0, 0.55), 3), ((1, 1, 1, 0.8), 1)):    # 8x8 grid: dark+light = visible on any colour
+            Rectangle(texture=self.texture, pos=(ox, oy), size=(self.img_w * k, self.img_h * k))
+            H = bd.unit_square_H(q[None])
+            for col, width in (((0, 0, 0, 0.55), 3), ((1, 1, 1, 0.85), 1)):      # grid readable on any colour
                 Color(*col)
                 for i in range(1, 8):
-                    gx = l + (r - l) * i / 8
-                    gy = b + (t - b) * i / 8
-                    Line(points=[gx, b, gx, t], width=w)
-                    Line(points=[l, gy, r, gy], width=w)
+                    for uv in ([[0, i / 8.0], [1, i / 8.0]], [[i / 8.0, 0], [i / 8.0, 1]]):
+                        p = bd.map_uv(H, np.array(uv, dtype=float))[0]
+                        pts = [c for x, y in p for c in self._to_widget(x, y)]
+                        Line(points=pts, width=width)
             Color(1.0, 0.85, 0.1, 1)
-            Line(rectangle=(l, b, r - l, t - b), width=dp(1.8))
-            for cx, cy in self._corners():
-                wx, wy = self._to_widget(cx, cy)
-                rad = dp(11)
+            outline = [c for x, y in q for c in self._to_widget(x, y)]
+            Line(points=outline, width=dp(2), close=True)
+            for i, (x, y) in enumerate(q):
+                wx, wy = self._to_widget(x, y)
+                rad = dp(13) if i == self.dragging else dp(11)
+                Color(0, 0, 0, 0.6)
+                Ellipse(pos=(wx - rad - 1.5, wy - rad - 1.5), size=(2 * rad + 3, 2 * rad + 3))
+                Color(1.0, 0.85, 0.1, 1)
                 Ellipse(pos=(wx - rad, wy - rad), size=(2 * rad, 2 * rad))
+            if self.dragging >= 0:
+                self._draw_loupe(q[self.dragging])
+
+    def _draw_loupe(self, pt):
+        """Magnifier in the top corner away from the finger (built from the picture data)."""
+        if self._disp is None:
+            return
+        size = dp(120)
+        half = max(14.0, 0.07 * min(self.img_w, self.img_h))              # image px shown on each side
+        s = self._tex_scale
+        dh, dw = self._disp.shape[:2]
+        span = max(8, int(2 * half * s))
+        x0 = int(max(0, min(dw - span, pt[0] * s - span / 2)))
+        y0 = int(max(0, min(dh - span, pt[1] * s - span / 2)))
+        crop = self._disp[y0:y0 + span, x0:x0 + span]
+        zoom = np.asarray(Image.fromarray(crop).resize((160, 160), Image.BILINEAR))
+        tex = Texture.create(size=(160, 160), colorfmt="rgb")
+        tex.blit_buffer(np.ascontiguousarray(zoom).tobytes(), colorfmt="rgb", bufferfmt="ubyte")
+        tex.flip_vertical()
+        wx, _ = self._to_widget(*pt)
+        lx = self.x + dp(6) if wx > self.center_x else self.right - size - dp(6)
+        ly = self.top - size - dp(6)
+        Color(0, 0, 0, 0.8)
+        Rectangle(pos=(lx - 2, ly - 2), size=(size + 4, size + 4))
+        Color(1, 1, 1, 1)
+        Rectangle(texture=tex, pos=(lx, ly), size=(size, size))
+        cx = lx + (pt[0] * s - x0) / span * size                          # where the corner is inside the loupe
+        cy = ly + size - (pt[1] * s - y0) / span * size
+        Color(1.0, 0.2, 0.2, 0.95)
+        Line(points=[cx - dp(9), cy, cx + dp(9), cy], width=1.3)
+        Line(points=[cx, cy - dp(9), cx, cy + dp(9)], width=1.3)
 
     # -- touch -----------------------------------------------------------------
+    @staticmethod
+    def _inside(q, p):
+        sign = None
+        for i in range(4):
+            a, b = q[i], q[(i + 1) % 4]
+            c = (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])
+            if abs(c) < 1e-9:
+                continue
+            if sign is None:
+                sign = c > 0
+            elif (c > 0) != sign:
+                return False
+        return True
+
     def on_touch_down(self, touch):
         if not self.collide_point(*touch.pos) or self.texture is None:
             return super().on_touch_down(touch)
         k, _, _ = self._layout()
         ix, iy = self._to_image(*touch.pos)
-        hit = dp(34) / k
-        corners = self._corners()
-        best, best_d = None, hit
-        for i, (cx, cy) in enumerate(corners):
-            d = ((cx - ix) ** 2 + (cy - iy) ** 2) ** 0.5
-            if d < best_d:
-                best, best_d = i, d
-        x, y, s = self.box
-        if best is not None:
-            self._mode = best
-            self._anchor = corners[3 - best]                        # opposite corner stays put
-        elif x <= ix <= x + s and y <= iy <= y + s:
+        q = self.get_quad()
+        reach = dp(40) / k
+        d = np.hypot(q[:, 0] - ix, q[:, 1] - iy)
+        i = int(d.argmin())
+        if d[i] < reach:
+            self._mode = i
+            self.dragging = i
+        elif self._inside(q, (ix, iy)):
             self._mode = "move"
-            self._grab_off = (ix - x, iy - y)
+            self._grab = (ix, iy)
         else:
             self._mode = None
             return True
@@ -129,28 +169,22 @@ class CropView(Widget):
         if touch.grab_current is not self or self._mode is None:
             return super().on_touch_move(touch)
         ix, iy = self._to_image(*touch.pos)
-        W, H = self.img_w, self.img_h
+        q = self.get_quad()
         if self._mode == "move":
-            x, y, s = self.box
-            nx = min(max(ix - self._grab_off[0], 0), W - s)
-            ny = min(max(iy - self._grab_off[1], 0), H - s)
-            self.box = [int(nx), int(ny), s]
+            dx, dy = ix - self._grab[0], iy - self._grab[1]
+            dx = min(max(dx, -q[:, 0].min()), self.img_w - 1 - q[:, 0].max())
+            dy = min(max(dy, -q[:, 1].min()), self.img_h - 1 - q[:, 1].max())
+            q = q + (dx, dy)
+            self._grab = (self._grab[0] + dx, self._grab[1] + dy)
         else:
-            ax, ay = self._anchor
-            right = self._mode in (1, 3)           # dragging a right-hand corner
-            bottom = self._mode in (2, 3)          # dragging a bottom corner
-            size = max(abs(ix - ax), abs(iy - ay))
-            max_w = (W - ax) if right else ax
-            max_h = (H - ay) if bottom else ay
-            size = int(max(MIN_BOX, min(size, max_w, max_h)))
-            nx = ax if right else ax - size
-            ny = ay if bottom else ay - size
-            self.box = [int(nx), int(ny), size]
+            q[self._mode] = (min(max(ix, 0), self.img_w - 1), min(max(iy, 0), self.img_h - 1))
+        self.set_quad(q)
         return True
 
     def on_touch_up(self, touch):
         if touch.grab_current is self:
             touch.ungrab(self)
             self._mode = None
+            self.dragging = -1
             return True
         return super().on_touch_up(touch)

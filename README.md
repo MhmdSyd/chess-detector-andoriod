@@ -19,6 +19,17 @@ Pick a chess screenshot from the gallery (or take a photo), the app reads the po
     pip install -r requirements-desktop.txt
     python main.py [optional_screenshot.png]      # needs Stockfish on PATH
 
+## Changes in 1.4
+- New look (dark slate + green) following the design mock-up, icons by Lucide (ISC licence).
+- Fully automatic: pick/take a photo -> board corners found -> straightened -> FEN read -> best moves.
+  Board detection = OpenCV contours (like the desktop script) + grid fit + perspective warp; a NumPy
+  detector is the fallback when OpenCV is not in the APK.
+- 4-corner editor (tap the small board preview) with magnifier, for photos that need a manual fix.
+- Back / forward arrows to step through positions; analysis results are cached per position.
+- Only one Stockfish runs at a time; a newer request cancels the older one.
+- Build: Actions -> Run workflow has an "OpenCV" checkbox (on by default). If the build fails because
+  of OpenCV, run it again with the box unticked.
+
 ## Changes in 1.1
 - Camera: fixed a crash when pressing Camera (nested Java class bug), the app now asks for the
   CAMERA permission and shows a message instead of closing if anything goes wrong.

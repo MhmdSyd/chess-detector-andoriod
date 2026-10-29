@@ -87,7 +87,8 @@ def _parse_info(line):
         return None
 
 
-def analyse_local(fen, path, num_moves=3, depth=15, timeout=60):
+def analyse_local(fen, path, num_moves=3, depth=15, timeout=60, should_stop=None):
+    """Returns a list of Lines, or None if `should_stop()` became true (request cancelled)."""
     board = chess.Board(fen)
     proc = subprocess.Popen([path], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.DEVNULL, text=True, bufsize=1)
@@ -118,6 +119,7 @@ def analyse_local(fen, path, num_moves=3, depth=15, timeout=60):
         raise TimeoutError(f"engine did not answer '{token}'")
 
     best = {}
+    cancelled = False
     try:
         send("uci")
         wait_for("uciok", 15)
@@ -130,6 +132,9 @@ def analyse_local(fen, path, num_moves=3, depth=15, timeout=60):
         send(f"go depth {depth}")
         end = time.time() + timeout
         while True:
+            if should_stop and should_stop():
+                cancelled = True
+                break
             if time.time() > end:
                 send("stop")
                 end = time.time() + 5
@@ -155,6 +160,8 @@ def analyse_local(fen, path, num_moves=3, depth=15, timeout=60):
         except Exception:
             proc.kill()
 
+    if cancelled:
+        return None
     sign = 1 if board.turn == chess.WHITE else -1       # engine reports side-to-move POV
     lines = []
     for k in sorted(best):
@@ -197,13 +204,17 @@ def analyse_online(fen, num_moves=3, timeout=15):
     return lines
 
 
-def analyse(fen, num_moves=3, depth=15):
-    """Returns (lines, message).  `message` explains fallbacks / failures."""
+def analyse(fen, num_moves=3, depth=15, should_stop=None):
+    """Returns (lines, message).  `message` explains fallbacks / failures.
+    `should_stop` is polled while the engine thinks; when it returns True the work is
+    abandoned and ([], 'cancelled') is returned."""
     note = ""
     path = find_stockfish()
     if path:
         try:
-            lines = analyse_local(fen, path, num_moves, depth)
+            lines = analyse_local(fen, path, num_moves, depth, should_stop=should_stop)
+            if lines is None:
+                return [], "cancelled"
             if lines:
                 return lines, ""
             note = "Stockfish returned no moves."

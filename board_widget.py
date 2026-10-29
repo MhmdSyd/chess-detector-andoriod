@@ -9,16 +9,18 @@ import math
 
 import chess
 from kivy.core.text import Label as CoreLabel
-from kivy.graphics import Color, Ellipse, Line, Rectangle, Triangle
+from kivy.graphics import (Color, Ellipse, Line, Rectangle, RoundedRectangle, StencilPop,
+                           StencilPush, StencilUnUse, StencilUse, Triangle)
 from kivy.metrics import dp
 from kivy.properties import BooleanProperty, ListProperty
 from kivy.uix.widget import Widget
 
-LIGHT_SQ = "#ffffdd"
-DARK_SQ = "#86a666"
-SELECT_SQ = "#4fa28e"
-LAST_MOVE = (1.0, 0.92, 0.2, 0.40)
-MOVE_DOT = (0.15, 0.35, 0.35, 0.55)
+LIGHT_SQ = "#e6e5c7"
+DARK_SQ = "#739151"
+SELECT_SQ = "#5fb36a"
+LAST_MOVE = (0.62, 0.86, 0.32, 0.55)
+MOVE_DOT = (0.12, 0.28, 0.14, 0.45)
+BOARD_RADIUS = 10          # dp, rounded outer corners
 
 # filled glyphs for both colours; colour + outline tell the sides apart
 GLYPH = {"p": "\u265F", "n": "\u265E", "b": "\u265D", "r": "\u265C", "q": "\u265B", "k": "\u265A"}
@@ -96,9 +98,9 @@ class BoardWidget(Widget):
             white = symbol.isupper()
             lbl = CoreLabel(
                 text=GLYPH[symbol.lower()], font_size=size_px, font_name=self.font_path,
-                color=(1, 1, 1, 1) if white else (0.08, 0.08, 0.08, 1),
-                outline_width=max(2, int(size_px / 22)),
-                outline_color=(0.05, 0.05, 0.05) if white else (0.9, 0.9, 0.9),
+                color=(0.98, 0.98, 0.96, 1) if white else (0.21, 0.23, 0.25, 1),
+                outline_width=max(2, int(size_px / 26)),
+                outline_color=(0.33, 0.37, 0.40) if white else (0.06, 0.07, 0.08),
             )
             lbl.refresh()
             self._tex_cache[symbol] = lbl.texture
@@ -117,8 +119,12 @@ class BoardWidget(Widget):
         if self.width < 10:
             return
         s, ox, oy = self._metrics()
+        r = dp(BOARD_RADIUS)
         self.canvas.clear()
         with self.canvas:
+            StencilPush()                                       # clip everything to a rounded square
+            RoundedRectangle(pos=(ox, oy), size=(8 * s, 8 * s), radius=[r])
+            StencilUse()
             for sq in chess.SQUARES:
                 x, y, _ = self._sq_rect(sq)
                 light = (chess.square_file(sq) + chess.square_rank(sq)) % 2 == 1
@@ -131,18 +137,20 @@ class BoardWidget(Widget):
                     Color(*hex_rgba(SELECT_SQ, 0.85))
                     Rectangle(pos=(x, y), size=(s, s))
 
-            # coordinates
+            # coordinates: file letters along the bottom row, rank numbers down the left column
             fs = max(8, int(s * 0.17))
-            files, ranks = "abcdefgh", "12345678"
+            bottom_rank = 7 if self.flipped else 0
+            left_file = 7 if self.flipped else 0
             for i in range(8):
-                f = files[i] if not self.flipped else files[7 - i]
-                r = ranks[i] if not self.flipped else ranks[7 - i]
-                col = (0.35, 0.35, 0.3, 1)
-                t = self._text_texture(f, fs, col)
+                file_idx = 7 - i if self.flipped else i
+                rank_idx = 7 - i if self.flipped else i
+                light = (file_idx + bottom_rank) % 2 == 1                  # colour of the square under the letter
+                t = self._text_texture("abcdefgh"[file_idx], fs, hex_rgba(DARK_SQ if light else LIGHT_SQ))
                 Color(1, 1, 1, 1)
-                Rectangle(texture=t, size=t.size, pos=(ox + i * s + s - t.width - 2, oy + 2))
-                t = self._text_texture(r, fs, col)
-                Rectangle(texture=t, size=t.size, pos=(ox + 2, oy + i * s + s - t.height - 1))
+                Rectangle(texture=t, size=t.size, pos=(ox + i * s + s - t.width - 3, oy + 2))
+                light = (left_file + rank_idx) % 2 == 1
+                t = self._text_texture(str(rank_idx + 1), fs, hex_rgba(DARK_SQ if light else LIGHT_SQ))
+                Rectangle(texture=t, size=t.size, pos=(ox + 3, oy + i * s + s - t.height - 1))
 
             # legal-move markers
             for sq in self.targets:
@@ -151,8 +159,8 @@ class BoardWidget(Widget):
                 if self.board.piece_at(sq):
                     Line(circle=(x + s / 2, y + s / 2, s * 0.44), width=max(2, s / 18))
                 else:
-                    r = s * 0.16
-                    Ellipse(pos=(x + s / 2 - r, y + s / 2 - r), size=(2 * r, 2 * r))
+                    rr = s * 0.16
+                    Ellipse(pos=(x + s / 2 - rr, y + s / 2 - rr), size=(2 * rr, 2 * rr))
 
             # pieces
             px = int(s * 0.82)
@@ -163,9 +171,12 @@ class BoardWidget(Widget):
                 Rectangle(texture=tex, size=tex.size,
                           pos=(x + (s - tex.width) / 2, y + (s - tex.height) / 2))
 
-            # arrows
             for fr, to, colr in self.arrows:
                 self._draw_arrow(fr, to, colr, s)
+
+            StencilUnUse()
+            RoundedRectangle(pos=(ox, oy), size=(8 * s, 8 * s), radius=[r])
+            StencilPop()
 
     def _draw_arrow(self, fr, to, colr, s):
         x1, y1, _ = self._sq_rect(fr)
