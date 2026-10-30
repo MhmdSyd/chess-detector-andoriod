@@ -19,6 +19,10 @@ Pick a chess screenshot from the gallery (or take a photo), the app reads the po
     pip install -r requirements-desktop.txt
     python main.py [optional_screenshot.png]      # needs Stockfish on PATH
 
+## Changes in 1.5
+- The board now draws your own piece images (assets/pieces/wk.png ... bp.png) instead of font symbols.
+  To change the look later, just replace those 12 PNG files (150x150, transparent background).
+
 ## Changes in 1.4
 - New look (dark slate + green) following the design mock-up, icons by Lucide (ISC licence).
 - Fully automatic: pick/take a photo -> board corners found -> straightened -> FEN read -> best moves.

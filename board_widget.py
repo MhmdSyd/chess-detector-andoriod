@@ -6,9 +6,12 @@ and the last move are drawn on top.  Pieces are drawn from the bundled DejaVu Sa
 (Android's own fonts do not reliably contain chess glyphs).
 """
 import math
+import os
 
 import chess
 from kivy.core.text import Label as CoreLabel
+from kivy.graphics.texture import Texture
+from PIL import Image as PILImage
 from kivy.graphics import (Color, Ellipse, Line, Rectangle, RoundedRectangle, StencilPop,
                            StencilPush, StencilUnUse, StencilUse, Triangle)
 from kivy.metrics import dp
@@ -22,10 +25,6 @@ LAST_MOVE = (0.62, 0.86, 0.32, 0.55)
 MOVE_DOT = (0.12, 0.28, 0.14, 0.45)
 BOARD_RADIUS = 10          # dp, rounded outer corners
 
-# filled glyphs for both colours; colour + outline tell the sides apart
-GLYPH = {"p": "\u265F", "n": "\u265E", "b": "\u265D", "r": "\u265C", "q": "\u265B", "k": "\u265A"}
-
-
 def hex_rgba(h, a=1.0):
     h = h.lstrip("#")
     return int(h[0:2], 16) / 255, int(h[2:4], 16) / 255, int(h[4:6], 16) / 255, a
@@ -36,9 +35,10 @@ class BoardWidget(Widget):
     arrows = ListProperty([])            # [(from_sq, to_sq, '#rrggbb'), ...]
     last_move = ListProperty([])         # [from_sq, to_sq] or []
 
-    def __init__(self, font_path, **kw):
+    def __init__(self, pieces_dir, **kw):
         super().__init__(**kw)
-        self.font_path = font_path
+        self.pieces_dir = pieces_dir              # folder with wk.png, bp.png ... (150x150 RGBA)
+        self._piece_src = {}                       # symbol -> PIL image, loaded on first use
         self.board = chess.Board()
         self.selected = None
         self.targets = []
@@ -91,19 +91,21 @@ class BoardWidget(Widget):
 
     # -- textures ---------------------------------------------------------------
     def _piece_texture(self, symbol, size_px):
+        """Texture of one piece (symbol 'P' = white pawn, 'n' = black knight ...) at exactly
+        size_px x size_px.  The artwork is resized once per board size with Pillow (smooth,
+        alpha-correct) instead of letting the GPU squash it every frame."""
         if self._tex_size != size_px:
             self._tex_cache.clear()
             self._tex_size = size_px
         if symbol not in self._tex_cache:
-            white = symbol.isupper()
-            lbl = CoreLabel(
-                text=GLYPH[symbol.lower()], font_size=size_px, font_name=self.font_path,
-                color=(0.98, 0.98, 0.96, 1) if white else (0.21, 0.23, 0.25, 1),
-                outline_width=max(2, int(size_px / 26)),
-                outline_color=(0.33, 0.37, 0.40) if white else (0.06, 0.07, 0.08),
-            )
-            lbl.refresh()
-            self._tex_cache[symbol] = lbl.texture
+            if symbol not in self._piece_src:
+                name = ("w" if symbol.isupper() else "b") + symbol.lower() + ".png"
+                self._piece_src[symbol] = PILImage.open(os.path.join(self.pieces_dir, name)).convert("RGBA")
+            img = self._piece_src[symbol].resize((size_px, size_px), PILImage.LANCZOS)
+            tex = Texture.create(size=(size_px, size_px), colorfmt="rgba")
+            tex.blit_buffer(img.tobytes(), colorfmt="rgba", bufferfmt="ubyte")
+            tex.flip_vertical()
+            self._tex_cache[symbol] = tex
         return self._tex_cache[symbol]
 
     def _text_texture(self, text, size_px, color):
@@ -163,7 +165,7 @@ class BoardWidget(Widget):
                     Ellipse(pos=(x + s / 2 - rr, y + s / 2 - rr), size=(2 * rr, 2 * rr))
 
             # pieces
-            px = int(s * 0.82)
+            px = max(8, int(s * 0.96))
             for sq, piece in self.board.piece_map().items():
                 x, y, _ = self._sq_rect(sq)
                 tex = self._piece_texture(piece.symbol(), px)

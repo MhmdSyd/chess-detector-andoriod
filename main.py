@@ -50,7 +50,7 @@ from theme import (GREEN, PANEL_BORDER, PANEL_FILL, STATUS, TEXT, TEXT_MUTED, Ic
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ASSETS = os.path.join(HERE, "assets")
-FONT = os.path.join(ASSETS, "fonts", "DejaVuSans.ttf")
+PIECES = os.path.join(ASSETS, "pieces")
 WEIGHTS = os.path.join(ASSETS, "piece_model.npz")
 
 ARROW_COLORS = ["#0A70AC", "#FF8800", "#FFCC00"]
@@ -126,7 +126,7 @@ class MainScreen(Screen):
         col.add_widget(head)
 
         # ── board ──
-        self.board = BoardWidget(FONT, size_hint=(1, None))
+        self.board = BoardWidget(PIECES, size_hint=(1, None))
         self.board.bind(width=lambda w, v: setattr(w, "height", v))
         self.board.on_user_move(app.on_user_move)
         col.add_widget(self.board)
