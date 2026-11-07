@@ -1,6 +1,11 @@
 name: Build APK
 on:
   push:
+    paths-ignore:            # documentation-only pushes do not need a new APK
+      - '**.md'
+      - 'docs/**'
+      - '.github/screenshots/**'
+      - 'LICENSE'
   workflow_dispatch:
     inputs:
       use_opencv:
