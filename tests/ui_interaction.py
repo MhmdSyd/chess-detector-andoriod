@@ -20,7 +20,7 @@ def check(name, cond): results.append(bool(cond)); print(("PASS " if cond else "
 
 class T(M.ChessAnalyzerApp):
     def on_start(self):
-        super().on_start(); Clock.schedule_once(self.step1, 1.5)
+        super().on_start(); self.set_depth(10, analyse=False); Clock.schedule_once(self.step1, 1.5)
     def step1(self, dt):
         b, m = self.board, self.main
         check("history starts with 1 entry, arrows disabled", len(self.history) == 1 and not m.btn_back.enabled and not m.btn_fwd.enabled)
@@ -79,6 +79,26 @@ class T(M.ChessAnalyzerApp):
         q = c.get_quad(); check("moving far outside is clamped to the picture", q[:, 0].min() >= 0 and q[:, 1].min() >= 0 and q[:, 0].max() <= 799 and q[:, 1].max() <= 999)
         t = Touch(*at(q[0][0], q[0][1])); c.on_touch_down(t); t.pos = at(-300, -300); c.on_touch_move(t); c.on_touch_up(t)
         q = c.get_quad(); check("corner dragged outside is clamped", q[0][0] >= 0 and q[0][1] >= 0)
+        # ---- Stockfish depth control ----
+        self.set_depth(15, analyse=False)
+        self.on_depth_step(+1); check("depth + button: 15 -> 16 (field shows 16)", self.depth == 16 and self.main.depth_input.text == "16")
+        self.on_depth_step(-1); self.on_depth_step(-1); check("depth - button: 16 -> 14", self.depth == 14 and self.main.depth_input.text == "14")
+        self.set_depth(99, analyse=False); check("depth is capped at 30", self.depth == 30 and self.main.depth_input.text == "30")
+        self.set_depth(0, analyse=False); check("depth is floored at 1", self.depth == 1 and self.main.depth_input.text == "1")
+        self.main.depth_input.text = "22"; self.on_depth_entered(); check("typing 22 + Enter sets depth 22", self.depth == 22)
+        self.main.depth_input.text = ""; self.on_depth_entered(); check("empty field restores the old value", self.depth == 22 and self.main.depth_input.text == "22")
+        import json
+        saved = json.load(open(self._settings_file()))["depth"]; check("depth is saved to settings (%s)" % saved, saved == 22)
+        check("a restarted app would load the saved depth", self._load_depth() == 22)
+        check("depth field accepts digits only", self.main.depth_input.input_filter == "int")
+        self.on_reset(); self.set_depth(6, analyse=False); self.on_user_move_demo = True
+        b = self.board; tap(b, chess.E2); tap(b, chess.E4)                  # a move -> analysis at the chosen depth
+        Clock.schedule_once(self.step3, 5)
+    def step3(self, dt):
+        txt = self.main.result.text
+        check("engine really ran at depth 6 (card says: %s)" % txt.split("depth")[-1][:4].strip(), "depth 6" in txt)
+        n_cached = len([k for k in self._cache if k[1] == 6]); self.set_depth(7)      # changing depth re-analyses (new cache key)
+        check("cache is keyed by depth (depth-6 entry kept, depth-7 requested)", n_cached >= 1 and self.depth == 7)
         print(f"\n{sum(results)}/{len(results)} checks passed"); self.stop()
 
 T().run()

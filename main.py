@@ -16,6 +16,7 @@ Back / forward arrows step through the positions you have played.
     detect_last_move      ->  chess_utils.py
     Stockfish             ->  engine.py      (bundled binary, Lichess fallback)
 """
+import json
 import os
 import sys
 import threading
@@ -34,7 +35,6 @@ from kivy.uix.image import Image
 from kivy.uix.label import Label
 from kivy.uix.modalview import ModalView
 from kivy.uix.screenmanager import NoTransition, Screen, ScreenManager
-from kivy.uix.scrollview import ScrollView
 from kivy.uix.textinput import TextInput
 from kivy.utils import platform
 
@@ -45,7 +45,7 @@ import engine
 from board_widget import BoardWidget
 from crop_view import CropView
 from fen_model import FenDetector
-from theme import (GREEN, PANEL_BORDER, PANEL_FILL, STATUS, TEXT, TEXT_MUTED, IconButton, PillToggle,
+from theme import (GREEN, PANEL_BORDER, PANEL_FILL, STATUS, TEXT, TEXT_DIM, TEXT_MUTED, IconButton, PillToggle,
                    RoundedBox, icon_path, label, rgba, set_gradient)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -54,7 +54,8 @@ PIECES = os.path.join(ASSETS, "pieces")
 WEIGHTS = os.path.join(ASSETS, "piece_model.npz")
 
 ARROW_COLORS = ["#0A70AC", "#FF8800", "#FFCC00"]
-SF_DEPTH, SF_MOVES = 15, 3
+SF_MOVES = 3
+DEPTH_MIN, DEPTH_MAX, DEPTH_DEFAULT = 1, 30, 15
 HISTORY_MAX = 400
 
 
@@ -104,117 +105,159 @@ def read_position(detector, board_rgb):
 # Screens
 # ──────────────────────────────────────────────────────────────────────────────
 
+PLACEHOLDER = "[color=#5d6672]Best moves will appear here[/color]"
+
+
+def centered_input(ti):
+    """Vertically centre the text of a single-line TextInput inside its box."""
+    def fix(*_):
+        pad = max(0, (ti.height - ti.line_height) / 2.0)
+        ti.padding_y = [pad, pad]
+    ti.bind(size=fix)
+    fix()
+
+
 class MainScreen(Screen):
+    """Fixed (non-scrolling) layout: every row has a set height, the board takes what is left."""
+
     def __init__(self, app, **kw):
         super().__init__(name="main", **kw)
         self.app = app
-        outer = BoxLayout(orientation="vertical")
+        outer = BoxLayout(orientation="vertical", padding=(dp(10), dp(6), dp(10), dp(4)), spacing=dp(6))
+        self.outer = outer
         set_gradient(outer)
 
-        scroll = ScrollView(do_scroll_x=False, bar_width=0)
-        col = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(10),
-                        padding=(dp(14), dp(6), dp(14), dp(8)))
-        col.bind(minimum_height=col.setter("height"))
+        # ── header: title on ONE line + two compact buttons ──
+        head = BoxLayout(size_hint_y=None, height=dp(38), spacing=dp(6))
+        self.title = label("Chess Analyzer", size=17, color=TEXT, bold=True, shorten=True, max_lines=1)
+        head.add_widget(self.title)
+        head.add_widget(IconButton("Gallery", icon="image", glow=True, font_size=12, radius=10,
+                                   size_hint_x=None, width=dp(88), on_release=app.on_gallery))
+        head.add_widget(IconButton("Camera", icon="camera", glow=True, font_size=12, radius=10,
+                                   size_hint_x=None, width=dp(88), on_release=app.on_camera))
+        outer.add_widget(head)
+        self.head_buttons = [w for w in head.children if isinstance(w, IconButton)]
 
-        # ── header ──
-        head = BoxLayout(size_hint_y=None, height=dp(56), spacing=dp(10))
-        head.add_widget(label("Chess Analyzer", size=21, color=TEXT))
-        head.add_widget(IconButton("Gallery", icon="image", glow=True, size_hint_x=None, width=dp(104),
-                                   on_release=app.on_gallery))
-        head.add_widget(IconButton("Camera", icon="camera", glow=True, size_hint_x=None, width=dp(104),
-                                   on_release=app.on_camera))
-        col.add_widget(head)
-
-        # ── board ──
-        self.board = BoardWidget(PIECES, size_hint=(1, None))
-        self.board.bind(width=lambda w, v: setattr(w, "height", v))
+        # ── board: gets all the free height, drawn as the biggest centred square that fits ──
+        self.board = BoardWidget(PIECES, size_hint=(1, 1))
         self.board.on_user_move(app.on_user_move)
-        col.add_widget(self.board)
+        outer.add_widget(self.board)
 
         # ── back / forward ──
-        hist = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(10))
-        self.btn_back = IconButton(icon="arrow-left", size_hint_x=None, width=dp(64), on_release=app.on_back)
-        self.btn_fwd = IconButton(icon="arrow-right", size_hint_x=None, width=dp(64), on_release=app.on_forward)
-        self.hist_label = label("", size=13, color=TEXT_MUTED, halign="center")
+        hist = BoxLayout(size_hint_y=None, height=dp(34), spacing=dp(8))
+        self.btn_back = IconButton(icon="arrow-left", radius=10, size_hint_x=None, width=dp(60), on_release=app.on_back)
+        self.btn_fwd = IconButton(icon="arrow-right", radius=10, size_hint_x=None, width=dp(60), on_release=app.on_forward)
+        self.hist_label = label("", size=12, color=TEXT_MUTED, halign="center")
         hist.add_widget(self.btn_back)
         hist.add_widget(self.hist_label)
         hist.add_widget(self.btn_fwd)
-        col.add_widget(hist)
+        outer.add_widget(hist)
 
         # ── side to move ──
-        row = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(10))
-        row.add_widget(label("Side to move", size=14, color=TEXT_MUTED, size_hint_x=None, width=dp(104)))
+        row = BoxLayout(size_hint_y=None, height=dp(38), spacing=dp(8))
+        row.add_widget(label("Side to move", size=13, color=TEXT_MUTED, size_hint_x=None, width=dp(94)))
         self.turn_toggle = PillToggle(on_change=app.on_turn)
         row.add_widget(self.turn_toggle)
-        col.add_widget(row)
+        outer.add_widget(row)
 
         # ── actions ──
-        row = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(10))
-        row.add_widget(IconButton("Analyse", icon="flask-conical", icon_right=True, icon_variant="green",
-                                  on_release=app.on_analyse))
-        row.add_widget(IconButton("Flip", icon="refresh-cw", icon_right=True, icon_variant="green",
-                                  on_release=app.on_flip))
-        row.add_widget(IconButton("Reset", icon="rotate-ccw", icon_right=True, icon_variant="green",
-                                  on_release=app.on_reset))
-        col.add_widget(row)
+        row = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(8))
+        for text, icon, cb in (("Analyse", "flask-conical", app.on_analyse), ("Flip", "refresh-cw", app.on_flip),
+                               ("Reset", "rotate-ccw", app.on_reset)):
+            row.add_widget(IconButton(text, icon=icon, icon_right=True, icon_variant="green", font_size=13,
+                                      radius=10, on_release=cb))
+        actions_row = row
+        outer.add_widget(row)
 
-        # ── FEN ──
-        row = BoxLayout(size_hint_y=None, height=dp(60), spacing=dp(10))
-        box = RoundedBox(fill=PANEL_FILL, border=PANEL_BORDER, radius=12, padding=(dp(4), dp(2), dp(8), dp(2)))
-        self.fen_input = TextInput(multiline=True, font_size=sp(14), foreground_color=rgba("#cfd4d5"),
+        # ── Stockfish depth:  [-]  [ 15 ]  [+]  ──
+        row = BoxLayout(size_hint_y=None, height=dp(38), spacing=dp(6))
+        row.add_widget(label("Stockfish depth", size=13, color=TEXT_MUTED, size_hint_x=None, width=dp(106)))
+        row.add_widget(IconButton("-", font_size=20, radius=10, size_hint_x=None, width=dp(42),
+                                  on_release=lambda *_: app.on_depth_step(-1)))
+        dbox = RoundedBox(fill=PANEL_FILL, border=PANEL_BORDER, radius=10, size_hint_x=None, width=dp(58),
+                          padding=(dp(2), 0))
+        self.depth_input = TextInput(text=str(DEPTH_DEFAULT), multiline=False, input_filter="int", halign="center",
+                                     font_size=sp(16), foreground_color=rgba("#e6eef0"), background_normal="",
+                                     background_active="", background_color=(0, 0, 0, 0), cursor_color=(1, 1, 1, 1),
+                                     write_tab=False)
+        centered_input(self.depth_input)
+        self.depth_input.bind(on_text_validate=app.on_depth_entered,
+                              focus=lambda w, f: None if f else app.on_depth_entered())
+        dbox.add_widget(self.depth_input)
+        row.add_widget(dbox)
+        row.add_widget(IconButton("+", font_size=20, radius=10, size_hint_x=None, width=dp(42),
+                                  on_release=lambda *_: app.on_depth_step(+1)))
+        self.depth_hint = label("range 1-30", size=11, color=TEXT_DIM, shorten=True, shorten_from="right", max_lines=1)
+        row.add_widget(self.depth_hint)
+        outer.add_widget(row)
+
+        # ── FEN: one line ──
+        row = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(8))
+        box = RoundedBox(fill=PANEL_FILL, border=PANEL_BORDER, radius=10, padding=(dp(2), 0, dp(8), 0))
+        self.fen_input = TextInput(multiline=False, font_size=sp(12), foreground_color=rgba("#cfd4d5"),
                                    background_normal="", background_active="", background_color=(0, 0, 0, 0),
-                                   cursor_color=(1, 1, 1, 1), write_tab=False, padding=(dp(10), dp(9)))
-        self.fen_input.bind(text=app.on_fen_text)
+                                   cursor_color=(1, 1, 1, 1), write_tab=False, padding=(dp(8), 0))
+        centered_input(self.fen_input)
+        self.fen_input.bind(text=app.on_fen_text, on_text_validate=app.on_fen_enter)
         box.add_widget(self.fen_input)
-        copy_icon = TapImage(source=icon_path("copy", "green"), size_hint=(None, None), size=(dp(22), dp(22)),
-                             pos_hint={"center_y": 0.5}, fit_mode="contain")
+        copy_icon = TapImage(source=icon_path("copy", "green"), size_hint=(None, 1), width=dp(20), fit_mode="contain")
         copy_icon.bind(on_release=app.on_copy)
-        side = BoxLayout(size_hint=(None, 1), width=dp(26), padding=(0, dp(18), 0, dp(18)))
-        side.add_widget(copy_icon)
-        box.add_widget(side)
+        box.add_widget(copy_icon)
         row.add_widget(box)
-        row.add_widget(IconButton("Set", size_hint_x=None, width=dp(58), on_release=app.on_fen_enter))
-        row.add_widget(IconButton("Copy", size_hint_x=None, width=dp(68), on_release=app.on_copy))
-        col.add_widget(row)
+        row.add_widget(IconButton("Set", font_size=13, radius=10, size_hint_x=None, width=dp(50), on_release=app.on_fen_enter))
+        row.add_widget(IconButton("Copy", font_size=13, radius=10, size_hint_x=None, width=dp(58), on_release=app.on_copy))
+        outer.add_widget(row)
 
-        # ── results card (shows the straightened board that was read + the best moves) ──
-        self.card = RoundedBox(fill="#1a252d", border="#2c3b46", radius=12, size_hint_y=None, height=dp(80),
-                               padding=dp(10), spacing=dp(10), opacity=0)
-        self.thumb = TapImage(size_hint=(None, None), size=(dp(70), dp(70)), fit_mode="contain",
-                              on_release=app.on_adjust)
-        self.result = Label(text="", markup=True, font_size=sp(16), color=rgba("#a3e635"), halign="left",
-                            valign="top", size_hint_y=None)
-        self.result.bind(width=lambda w, v: setattr(w, "text_size", (v, None)),
-                         texture_size=self._fit_card)
-        thumb_col = BoxLayout(orientation="vertical", size_hint=(None, 1), width=dp(70), spacing=dp(2))
+        # ── results card: preview of the straightened board + best moves ──
+        self.card = RoundedBox(fill="#1a252d", border="#2c3b46", radius=12, size_hint_y=None, height=dp(98),
+                               padding=dp(8), spacing=dp(8))
+        thumb_col = BoxLayout(orientation="vertical", size_hint=(None, 1), width=0, spacing=dp(2), opacity=0)
+        self.thumb = TapImage(fit_mode="contain", on_release=app.on_adjust)
         thumb_col.add_widget(self.thumb)
-        thumb_col.add_widget(label("tap: adjust", size=10, color=TEXT_MUTED, halign="center",
-                                   size_hint_y=None, height=dp(14)))
+        thumb_col.add_widget(label("tap: adjust", size=9, color=TEXT_MUTED, halign="center",
+                                   size_hint_y=None, height=dp(12)))
         self.thumb_col = thumb_col
+        self.result = Label(text=PLACEHOLDER, markup=True, font_size=sp(15), color=rgba("#a3e635"), halign="left",
+                            valign="middle")
+        self.result.bind(size=lambda w, s: setattr(w, "text_size", s))
         self.card.add_widget(thumb_col)
         self.card.add_widget(self.result)
-        col.add_widget(self.card)
+        outer.add_widget(self.card)
 
-        scroll.add_widget(col)
-        outer.add_widget(scroll)
-
-        # ── status line (pinned to the bottom) ──
-        self.status = label("", size=12, color=STATUS["info"], size_hint_y=None, height=dp(34),
-                            padding=(dp(16), 0))
+        # ── status line ──
+        self.status = label("", size=11, color=STATUS["info"], size_hint_y=None, height=dp(32),
+                            shorten=True, max_lines=2)
         outer.add_widget(self.status)
         self.add_widget(outer)
-        self.thumb_col.opacity = 0
-        self.thumb_col.width = 0
 
-    def _fit_card(self, w, size):
-        w.height = max(size[1], dp(54))
-        self.card.height = w.height + dp(20) + (dp(8) if self.thumb_col.width else 0)
-        self.card.opacity = 1 if w.text else 0
+        # (widget, normal height dp, compact height dp) for every fixed-height row
+        self._rows = [(head, 38, 34), (hist, 34, 30), (self.turn_toggle.parent, 38, 34), (actions_row, 40, 36),
+                      (self.depth_input.parent.parent, 38, 34), (self.fen_input.parent.parent, 40, 36),
+                      (self.card, 98, 80), (self.status, 32, 28)]
+        Window.bind(size=lambda *_: self.apply_density())
+        self.apply_density()
+
+    def apply_density(self):
+        """Tighten the layout on small screens so the whole UI still fits without scrolling."""
+        w_dp, h_dp = Window.width / dp(1), Window.height / dp(1)
+        compact = h_dp < 640
+        for widget, normal, small in self._rows:
+            widget.height = dp(small if compact else normal)
+        self.outer.spacing = dp(4 if compact else 6)
+        self.result.font_size = sp(13 if compact else 15)
+        narrow = w_dp < 345
+        self.title.font_size = sp(15 if narrow else 17)
+        for b in self.head_buttons:
+            b.width = dp(76 if narrow else 88)
+        self.depth_hint.opacity = 0 if narrow else 1          # no room for the hint on very narrow phones
+
+    def set_result(self, text):
+        self.result.text = text or PLACEHOLDER
 
     def show_thumb(self, tex):
         self.thumb.texture = tex
         self.thumb_col.opacity = 1
-        self.thumb_col.width = dp(70)
+        self.thumb_col.width = dp(78)
 
     def set_turn_toggle(self, turn):
         self.turn_toggle.set_value(turn)
@@ -248,7 +291,10 @@ class ChessAnalyzerApp(App):
 
     def build(self):
         if platform not in ("android", "ios"):
-            Window.size = (400, 800)                     # phone-like window on a desktop
+            w, h = 400, 800                              # phone-like window on a desktop
+            if os.environ.get("CHESS_WIN"):              # e.g. CHESS_WIN=360x640 (for layout tests)
+                w, h = [int(v) for v in os.environ["CHESS_WIN"].split("x")]
+            Window.size = (w, h)
         else:
             Window.softinput_mode = "below_target"       # keyboard must not hide the FEN box
         self.detector = None
@@ -259,7 +305,8 @@ class ChessAnalyzerApp(App):
         self._busy_label = None
         self.turn = "w"
         self.history, self.hindex = [], -1
-        self._cache = {}                                  # fen -> (lines, note)
+        self._cache = {}                                  # (fen, depth) -> (lines, note)
+        self.depth = self._load_depth()
         self._engine_lock = threading.Lock()              # one Stockfish at a time
 
         self.sm = ScreenManager(transition=NoTransition())
@@ -274,6 +321,7 @@ class ChessAnalyzerApp(App):
         self.board = self.main.board
         self.apply_fen(chess.STARTING_FEN)
         self.hist_reset()
+        self.main.depth_input.text = str(self.depth)
         self.status("Loading the piece-recognition model...", "info")
         threading.Thread(target=self._load_model, daemon=True).start()
         if len(sys.argv) > 1 and os.path.isfile(sys.argv[1]):          # desktop testing helper
@@ -430,7 +478,7 @@ class ChessAnalyzerApp(App):
         problems = cu.position_problems(res["fen"])
         if problems:
             self.status("Position looks wrong (%s). Tap the preview to adjust the corners, or edit the FEN." % ", ".join(problems), "warn")
-            self.main.result.text = ""
+            self.main.set_result("")
             return
         self.status(msg, "warn" if res["notes"] else "ok")
         self.on_analyse()
@@ -481,7 +529,7 @@ class ChessAnalyzerApp(App):
         flipped = self.board.flipped
         if self.apply_fen(fen):
             self.board.flipped = flipped
-            self.main.result.text = ""
+            self.main.set_result("")
             self.hist_push()
             self.on_analyse()
 
@@ -492,7 +540,7 @@ class ChessAnalyzerApp(App):
         self.board.flipped = False
         self.apply_fen(chess.STARTING_FEN)
         self.hist_reset()
-        self.main.result.text = ""
+        self.main.set_result("")
         self.status("Board reset to the starting position.", "info")
 
     def on_copy(self, *_):
@@ -538,21 +586,61 @@ class ChessAnalyzerApp(App):
         if self.hindex < len(self.history) - 1:
             self._goto(self.hindex + 1)
 
+    # -- Stockfish depth setting ---------------------------------------------------
+    def _settings_file(self):
+        return os.path.join(self.user_data_dir, "settings.json")
+
+    def _load_depth(self):
+        try:
+            with open(self._settings_file()) as f:
+                return max(DEPTH_MIN, min(DEPTH_MAX, int(json.load(f)["depth"])))
+        except Exception:                                        # first run / unreadable file
+            return DEPTH_DEFAULT
+
+    def _save_depth(self):
+        try:
+            with open(self._settings_file(), "w") as f:
+                json.dump({"depth": self.depth}, f)
+        except Exception:                                        # saving is a convenience only
+            pass
+
+    def set_depth(self, value, analyse=True):
+        value = max(DEPTH_MIN, min(DEPTH_MAX, int(value)))
+        changed = value != self.depth
+        self.depth = value
+        self.main.depth_input.text = str(value)
+        if changed:
+            self._save_depth()
+            self.status("Stockfish depth set to %d%s." % (value, " - deeper is slower" if value > 18 else ""), "info")
+            if analyse:
+                self.on_analyse()
+
+    def on_depth_step(self, delta):
+        self.set_depth(self.depth + delta)
+
+    def on_depth_entered(self, *_):
+        text = self.main.depth_input.text.strip()
+        try:
+            self.set_depth(int(text))
+        except ValueError:                                       # empty / not a number: put the old value back
+            self.main.depth_input.text = str(self.depth)
+
     # -- analysis ---------------------------------------------------------------
     def on_analyse(self, *_):
         fen = self.board.get_fen()
         problems = cu.position_problems(fen)
         if problems:
-            self.main.result.text = ""
+            self.main.set_result("")
             self.status("Cannot analyse: %s." % ", ".join(problems), "warn")
             return
         self._analysis_id += 1
         my_id = self._analysis_id
-        if fen in self._cache:                                   # visited before: instant
-            lines, note = self._cache[fen]
+        depth = self.depth
+        if (fen, depth) in self._cache:                          # visited before: instant
+            lines, note = self._cache[(fen, depth)]
             self._show_lines(my_id, fen, lines, note)
             return
-        self.main.result.text = "Analysing..."
+        self.main.set_result("Analysing...")
         self.status("Running Stockfish...", "info")
 
         def work():
@@ -560,9 +648,9 @@ class ChessAnalyzerApp(App):
             with self._engine_lock:
                 if stale():
                     return
-                lines, note = engine.analyse(fen, SF_MOVES, SF_DEPTH, should_stop=stale)
+                lines, note = engine.analyse(fen, SF_MOVES, depth, should_stop=stale)
             if lines:
-                self._cache[fen] = (lines, note)
+                self._cache[(fen, depth)] = (lines, note)
             self.ui(self._show_lines, my_id, fen, lines, note)
 
         threading.Thread(target=work, daemon=True).start()
@@ -571,7 +659,7 @@ class ChessAnalyzerApp(App):
         if my_id != self._analysis_id:
             return                                               # a newer request replaced this one
         if not lines:
-            self.main.result.text = "No result."
+            self.main.set_result("No result.")
             self.status(note or "Analysis failed.", "err")
             return
         out, arrows = [], []
@@ -580,8 +668,8 @@ class ChessAnalyzerApp(App):
             out.append("[color=%s][b]%d.[/b][/color]  [b]%s[/b]   %s" % (col, i + 1, ln.san, engine.format_score(ln)))
             arrows.append((chess.parse_square(ln.uci[:2]), chess.parse_square(ln.uci[2:4]), col))
         out.append("[size=%d][color=#8c94a3]%s, depth %d. Score: + = White better.[/color][/size]"
-                   % (int(sp(12)), lines[0].source, lines[0].depth))
-        self.main.result.text = "\n".join(out)
+                   % (int(sp(10)), lines[0].source, lines[0].depth))
+        self.main.set_result("\n".join(out))
         self.board.arrows = arrows
         self.status((note + " " if note else "") + "Best move: %s" % lines[0].san, "warn" if note else "ok")
 

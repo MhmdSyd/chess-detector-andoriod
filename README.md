@@ -19,6 +19,11 @@ Pick a chess screenshot from the gallery (or take a photo), the app reads the po
     pip install -r requirements-desktop.txt
     python main.py [optional_screenshot.png]      # needs Stockfish on PATH
 
+## Changes in 1.6
+- Fixed one-screen layout (no scrolling): the board takes the free height, every other row has a set
+  height; compact mode for small phones. Title on one line, shorter buttons, one-line FEN field.
+- New "Stockfish depth" control (1-30): - / + buttons or type a number. Remembered between launches.
+
 ## Changes in 1.5
 - The board now draws your own piece images (assets/pieces/wk.png ... bp.png) instead of font symbols.
   To change the look later, just replace those 12 PNG files (150x150, transparent background).

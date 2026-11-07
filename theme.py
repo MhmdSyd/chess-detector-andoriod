@@ -162,7 +162,7 @@ class PillToggle(Widget):
             self._pill = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(17)])
         self._labels = []
         for text, _v in self.options:
-            lbl = Label(text=text, font_size=sp(15), bold=True)
+            lbl = Label(text=text, font_size=sp(14), bold=True)
             self._labels.append(lbl)
             self.add_widget(lbl)
         self.bind(pos=self._layout, size=self._layout, value=self._layout)
@@ -175,7 +175,9 @@ class PillToggle(Widget):
         n, pad = len(self.options), dp(4)
         seg = (self.width - 2 * pad) / n
         self._track.pos, self._track.size = self.pos, self.size
-        self._track_line.rounded_rectangle = (self.x, self.y, self.width, self.height, dp(20))
+        r = self.height / 2.0
+        self._track.radius = [r]
+        self._track_line.rounded_rectangle = (self.x, self.y, self.width, self.height, r)
         i = self._idx()
         self._pill.pos = (self.x + pad + i * seg, self.y + pad)
         self._pill.size = (seg, self.height - 2 * pad)
